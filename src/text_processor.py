@@ -1,5 +1,7 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-def split_documents(documents, chunk_size=800, chunk_overlap=100):
+from .config import CHUNK_SIZE, CHUNK_OVERLAP
+
+def split_documents(documents, chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP):
     """Split documents into smaller chunks for better RAG performance"""
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,

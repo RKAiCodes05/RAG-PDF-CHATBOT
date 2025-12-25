@@ -9,6 +9,10 @@ def process_all_pdfs(pdf_directory):
     pdf_files = list(pdf_dir.glob("**/*.pdf"))
     
     print(f"Found {len(pdf_files)} PDF files to process")
+
+    if not pdf_files:
+        print("⚠️ No PDFs found in data/pdf/")
+        return []
     
     for pdf_file in pdf_files:
         print(f"\nProcessing: {pdf_file.name}")

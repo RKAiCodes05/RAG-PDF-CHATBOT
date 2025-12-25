@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from src.retriever import RAGRetriever
+from .retriever import RAGRetriever
 class RAGSystem:
     """Complete RAG system that orchestrates all components"""
     

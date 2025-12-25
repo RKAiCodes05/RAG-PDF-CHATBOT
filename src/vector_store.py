@@ -1,92 +1,84 @@
-import chromadb
-import os
-import uuid
+import faiss
 import numpy as np
-from typing import List, Any
+import os
+import json
 class VectorStore:
-    """Manages document embeddings in a ChromaDB vector store"""
+    """Manages document embeddings using FAISS"""
     
-    def __init__(self, collection_name: str = 'pdf_documents', 
-                 persist_directory: str = "data/vector_store"):
+    def __init__(self, embedding_dim: int):
         """
-        Initialize the vector store
+        Initialize FAISS vector store
         
         Args:
-            collection_name: Name of the ChromaDB collection
-            persist_directory: Directory to persist the vector store
+            embedding_dim: Dimension of embeddings
         """
-        self.collection_name = collection_name
-        self.persist_directory = persist_directory
-        self.client = None
-        self.collection = None
-        self._initialize_store()
+        self.embedding_dim = embedding_dim
+        self.index = faiss.IndexFlatIP(embedding_dim)  # cosine similarity
+        self.documents = []
+        self.metadatas = []
+        print("✅ FAISS vector store initialized")
     
-    def _initialize_store(self):
-        """Initialize ChromaDB client and collection"""
-        try:
-            # Create persistent ChromaDB client
-            os.makedirs(self.persist_directory, exist_ok=True)
-            self.client = chromadb.PersistentClient(path=self.persist_directory)
-            
-            # Get or create collection
-            self.collection = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={"description": "PDF document embeddings for RAG"}
-            )
-            print(f'✅ Vector store initialized. Collection: {self.collection_name}')
-            print(f'   Existing documents in collection: {self.collection.count()}')
+    def add_documents(self, documents, embeddings):
+        """
+        Add documents and embeddings to FAISS index
+        """
+        embeddings = embeddings.astype("float32")
+        faiss.normalize_L2(embeddings)  # required for cosine similarity
         
-        except Exception as e:
-            print(f"❌ Error initializing vector store: {e}")
-            raise
+        self.index.add(embeddings)
+        
+        for doc in documents:
+            self.documents.append(doc.page_content)
+            self.metadatas.append(doc.metadata)
+        
+        print(f"✅ Added {len(documents)} documents to FAISS index")
+        print(f"   Total vectors: {self.index.ntotal}")
     
-    def add_documents(self, documents: List[Any], embeddings: np.ndarray):
+    def search(self, query_embedding, top_k=5):
         """
-        Add documents and their embeddings to the vector store
-        
-        Args:
-            documents: List of LangChain documents
-            embeddings: Corresponding embeddings for the documents
+        Search FAISS index
         """
-        if len(documents) != len(embeddings):
-            raise ValueError("Number of documents must match number of embeddings")
+        query_embedding = np.array(query_embedding, dtype="float32").reshape(1, -1)
+        faiss.normalize_L2(query_embedding)
         
-        print(f"Adding {len(documents)} documents to vector store...")
+        distances, indices = self.index.search(query_embedding, top_k)
         
-        # Prepare data for ChromaDB
-        ids = []
-        metadatas = []
-        documents_text = []
-        embeddings_list = []
-        
-        for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
-            # Generate unique ID
-            doc_id = f"doc_{uuid.uuid4().hex[:8]}_{i}"
-            ids.append(doc_id)
+        results = []
+        for rank, idx in enumerate(indices[0]):
+            if idx == -1:
+                continue
             
-            # Prepare metadata
-            metadata = dict(doc.metadata)
-            metadata['doc_index'] = i
-            metadata['content_length'] = len(doc.page_content)
-            metadatas.append(metadata)
-            
-            # Document content
-            documents_text.append(doc.page_content)
-            
-            # Embedding
-            embeddings_list.append(embedding.tolist())
+            results.append({
+                "content": self.documents[idx],
+                "metadata": self.metadatas[idx],
+                "similarity_score": float(distances[0][rank]),
+                "rank": rank + 1
+            })
         
-        # Add to collection
-        try:
-            self.collection.add(
-                ids=ids,
-                embeddings=embeddings_list,
-                metadatas=metadatas,
-                documents=documents_text
-            )
-            print(f"✅ Successfully added {len(documents)} documents to vector store")
-            print(f"   Total documents in collection: {self.collection.count()}")
-        
-        except Exception as e:
-            print(f"❌ Error adding documents to vector store: {e}")
-            raise
+        return results
+
+    def save(self, path="data/faiss_store"):
+            os.makedirs(path, exist_ok=True)
+
+            faiss.write_index(self.index, os.path.join(path, "faiss.index"))
+
+            with open(os.path.join(path, "documents.json"), "w", encoding="utf-8") as f:
+                json.dump(self.documents, f)
+
+            with open(os.path.join(path, "metadatas.json"), "w", encoding="utf-8") as f:
+                json.dump(self.metadatas, f)
+
+    def load(self, path="data/faiss_store"):
+            index_path = os.path.join(path, "faiss.index")
+            if not os.path.exists(index_path):
+                return False
+
+            self.index = faiss.read_index(index_path)
+
+            with open(os.path.join(path, "documents.json"), "r", encoding="utf-8") as f:
+                self.documents = json.load(f)
+
+            with open(os.path.join(path, "metadatas.json"), "r", encoding="utf-8") as f:
+                self.metadatas = json.load(f)
+
+            return True
